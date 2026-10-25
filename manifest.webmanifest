@@ -1,0 +1,33 @@
+{
+  "name": "HK Bus Finder",
+  "short_name": "HK Bus",
+  "description": "Route finder and live departure boards for KMB, Citybus and Lantau Bus in Hong Kong.",
+  "start_url": "./",
+  "scope": "./",
+  "id": "hk-bus-finder",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#171717",
+  "categories": ["travel", "navigation", "utilities"],
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
