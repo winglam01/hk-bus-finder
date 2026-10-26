@@ -259,6 +259,7 @@ async function runFinderSearch() {
       const payload = await api(`/api/search/stops?q=${encodeURIComponent(q)}${operatorParam}`);
       state.finder.stopResults = payload.results || [];
       state.finder.results = [];
+      noteCatalogue(payload.catalogue);
     }
   } catch (error) {
     state.finder.error = error.message;
@@ -269,6 +270,24 @@ async function runFinderSearch() {
 }
 
 let boardSearchTimer = null;
+
+/**
+ * Citybus publishes no stop list, so the names are assembled on demand. While
+ * that is happening the results are refreshed so the stops appear as they are
+ * resolved rather than only on the next search.
+ */
+let catalogueTimer = null;
+
+function noteCatalogue(catalogue) {
+  if (!catalogue) return;
+  if (state.bootstrap) state.bootstrap.catalogue = catalogue;
+  clearTimeout(catalogueTimer);
+  if (catalogue.status !== 'running') return;
+  catalogueTimer = setTimeout(() => {
+    if (state.view.name === 'finder' && state.finder.mode === 'stops') void runFinderSearch();
+    if (state.view.name === 'board' && state.board.q.trim()) void runBoardSearch();
+  }, 4000);
+}
 
 function scheduleBoardSearch() {
   clearTimeout(boardSearchTimer);
@@ -287,6 +306,7 @@ async function runBoardSearch() {
   try {
     const payload = await api(`/api/search/stops?q=${encodeURIComponent(q)}&operator=${state.board.operator}`);
     state.board.results = payload.results || [];
+    noteCatalogue(payload.catalogue);
   } catch (error) {
     state.board.error = error.message;
   }

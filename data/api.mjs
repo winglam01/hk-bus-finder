@@ -102,7 +102,16 @@ export async function handleApi(path, options = {}) {
         url.searchParams.get('q') ?? '',
         url.searchParams.get('operator') ?? '',
       );
-      return { status: 200, payload: { results, now: new Date().toISOString() } };
+      // The stop catalogue is built on demand, so its progress travels with
+      // the results and the page can refresh them as names arrive.
+      return {
+        status: 200,
+        payload: {
+          results,
+          now: new Date().toISOString(),
+          catalogue: { ...getDomain().catalogue },
+        },
+      };
     }
 
     const routeMatch = pathname.match(/^\/api\/routes\/([a-z]{3})\/([^/]+)$/);

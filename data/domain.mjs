@@ -231,6 +231,14 @@ export function createDomain(context = {}) {
     if (!q) return [];
     const only = OPERATORS[operator] ? operator : '';
 
+    // Citybus publishes no stop list, so its names only exist once the
+    // catalogue has been built. Nothing is harvested until a stop is actually
+    // searched for: on a phone that is the difference between one request and
+    // sixteen hundred.
+    if (!only || only === 'ctb') {
+      if (catalogue.status === 'idle') void buildCatalogue();
+    }
+
     /** @type {Map<string, [string, { nameEn: string, nameTc: string, lat: number, long: number }][]>} */
     const catalogues = new Map();
     catalogues.set('kmb', [...(await upstream.kmbStops().catch(() => new Map())).entries()]);
@@ -505,18 +513,10 @@ export function createDomain(context = {}) {
     for (const entry of index.values()) counts[entry.operator] = (counts[entry.operator] ?? 0) + 1;
 
     if (background) {
-      // Warm the stop catalogue in the background; it is not needed to answer
-      // the first request.
-      setTimeout(() => {
-        void buildCatalogue();
-      }, 1500);
-
-      // Warm the large KMB collections so a departure board does not have to
-      // download them on demand.
-      setTimeout(() => {
-        void upstream.kmbStops().catch(() => undefined);
-        void upstream.kmbStopRoutes().catch(() => undefined);
-      }, 400);
+      // Nothing is warmed up here. The large collections cost megabytes and
+      // the Citybus stop catalogue costs well over a thousand requests, so on
+      // a phone they are fetched when something actually needs them rather
+      // than on every page load.
     }
 
     return {
