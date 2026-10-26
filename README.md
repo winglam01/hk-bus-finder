@@ -63,6 +63,7 @@ data/storage.mjs    persistence with a quota-safe fallback
 A few decisions worth knowing about:
 
 - **Caching is honest.** Static collections live for six hours, arrival times for twenty seconds, and a failed feed is never cached — an empty collection throws rather than being stored.
+- **Nothing is fetched until it is wanted.** Citybus publishes no stop list, so one is assembled from the per-route stop lists — well over a thousand requests. That only happens the first time somebody actually searches for a stop, and the page says so while it runs. The large KMB collections are fetched when a route is opened, not on every page load.
 - **A flaky upstream is retried, not trusted.** The Transport Department edge answers `403` at random on its large collections, at roughly one request in three. Every feed call retries, and a route list that still fails is re-fetched in the background so the operator comes back on its own.
 - **The KMB stop catalogue has a fallback.** When the bulk stop collection is refused, names are resolved one stop at a time instead, so a route page is never hidden by an upstream outage.
 - **No build step means no build toolchain to install.**
