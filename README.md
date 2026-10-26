@@ -27,7 +27,7 @@ KMB's daytime and night services are kept as **separate variants** rather than m
 
 | | |
 |---|---|
-| GitHub Pages | `https://<your-account>.github.io/hk-bus-finder/` |
+| GitHub Pages | `https://winglam01.github.io/hk-bus-finder/` |
 | MiniMax drive | `https://khdp8zb0cldo7.space.minimax.io` |
 
 ## Where the data comes from
