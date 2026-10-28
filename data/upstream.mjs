@@ -174,6 +174,33 @@ export class Cache {
   }
 
   /**
+   * A cached value, without going to the network for it.
+   *
+   * Returns undefined when the value was never cached or has expired. This is
+   * how the interface can show what it already knows without paying for a
+   * request to find out.
+   *
+   * @template T
+   * @param {string} key
+   * @param {number} ttlMs
+   * @returns {T | undefined}
+   */
+  peek(key, ttlMs) {
+    const now = Date.now();
+    const hit = this.mem.get(key);
+    if (hit && now - hit.t < ttlMs) return /** @type {T} */ (hit.v);
+
+    if (this.storage) {
+      const stored = this.storage.get(this.storageKey(key));
+      if (stored && typeof stored === 'object' && typeof stored.t === 'number' && now - stored.t < ttlMs) {
+        this.mem.set(key, /** @type {{ t: number, v: unknown }} */ (stored));
+        return /** @type {T} */ (/** @type {{ v: T }} */ (stored).v);
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * @template T
    * @param {string} key
    * @param {number} ttlMs
@@ -784,6 +811,161 @@ export class Upstream {
   }
 
   /**
+   * The published stop rows of one route direction, before stop names are
+   * resolved.
+   *
+   * @param {'kmb'|'ctb'|'nlb'} operator
+   * @param {string} route
+   * @param {'O'|'I'} dir
+   * @param {number[]} [serviceTypes]
+   * @returns {Promise<any[]>}
+   */
+  async rawRouteStops(operator, route, dir, serviceTypes = []) {
+    /** @type {any[]} */
+    const raw = [];
+
+    if (operator === 'kmb') {
+      const types = serviceTypes.length ? serviceTypes : [1];
+      const payloads = await mapLimited(
+        2,
+        types.map((type) => async () => {
+          const payload = await getJson(
+            `${KMB_BASE}/route-stop/${encodeURIComponent(route)}/${dir === 'O' ? 'outbound' : 'inbound'}/${type}`,
+          );
+          return Array.isArray(payload?.data) ? payload.data : [];
+        }),
+      );
+      for (const rows of payloads) {
+        for (const row of rows ?? []) {
+          if (!isObject(row)) continue;
+          raw.push({
+            seq: Number.parseInt(asText(row.seq), 10) || 0,
+            stopId: asText(row.stop),
+            serviceType: Number.parseInt(asText(row.service_type), 10) || 1,
+          });
+        }
+      }
+    } else if (operator === 'ctb') {
+      const payload = await getJson(
+        `${GOV_BASE}/v2/transport/citybus/route-stop/CTB/${encodeURIComponent(route)}/${dir === 'O' ? 'outbound' : 'inbound'}`,
+      );
+      for (const row of Array.isArray(payload?.data) ? payload.data : []) {
+        if (!isObject(row)) continue;
+        raw.push({ seq: Number.parseInt(asText(row.seq), 10) || 0, stopId: asText(row.stop), serviceType: 1 });
+      }
+    } else {
+      const ids = await this.nlbRouteIds();
+      const all = ids.get(route) ?? [];
+      const candidates = all.length > 1 ? [all[dir === 'O' ? 0 : 1]] : all;
+      for (const routeId of candidates) {
+        const payload = await getJson(
+          `${GOV_BASE}/v2/transport/nlb/stop.php?action=list&routeId=${encodeURIComponent(routeId)}`,
+        );
+        const rows = Array.isArray(payload?.stops) ? payload.stops : [];
+        for (const stop of rows) {
+          if (!isObject(stop)) continue;
+          raw.push({
+            seq: raw.length + 1,
+            stopId: asText(stop.stopId),
+            serviceType: 1,
+            nameEn: asText(stop.stopName_e),
+            nameTc: asText(stop.stopName_c),
+            lat: asNumber(stop.latitude),
+            long: asNumber(stop.longitude),
+            fare: Number.isFinite(Number.parseFloat(asText(stop.fare))) ? Number.parseFloat(asText(stop.fare)) : null,
+            fareHoliday: Number.isFinite(Number.parseFloat(asText(stop.fareHoliday)))
+              ? Number.parseFloat(asText(stop.fareHoliday))
+              : null,
+          });
+        }
+      }
+    }
+
+    return raw;
+  }
+
+  /**
+   * The stop ids of one route direction, without resolving stop names.
+   *
+   * The route-stop endpoint answers with stop ids only, so this is one small
+   * request per direction and it says whether a direction runs at all.
+   *
+   * @param {'kmb'|'ctb'|'nlb'} operator
+   * @param {string} route
+   * @param {'O'|'I'} dir
+   * @param {number[]} [serviceTypes]
+   * @returns {Promise<string[]>}
+   */
+  async routeStopIds(operator, route, dir, serviceTypes = []) {
+    const key = `routestopids:${operator}:${route}:${dir}:${serviceTypes.join(',') || 'all'}`;
+    return this.cache.get(key, STATIC_TTL, async () => {
+      const raw = await this.rawRouteStops(operator, route, dir, serviceTypes);
+      const seen = new Set();
+      const ids = [];
+      for (const item of raw) {
+        const stopId = asText(item?.stopId);
+        if (!stopId || seen.has(stopId)) continue;
+        seen.add(stopId);
+        ids.push(stopId);
+      }
+      return ids;
+    });
+  }
+
+  /**
+   * The directions a route really runs.
+   *
+   * Citybus publishes one row per route with no direction at all, so its
+   * route list cannot say whether a route runs both ways; the route-stop
+   * endpoint can. Only the first and last stop of each direction are named,
+   * which keeps the extra cost to a couple of calls per route.
+   *
+   * @param {'kmb'|'ctb'|'nlb'} operator
+   * @param {string} route
+   * @param {number[]} [serviceTypes]
+   * @returns {Promise<{ dir: 'O'|'I', originEn: string, originTc: string, destEn: string, destTc: string }[]>}
+   */
+  async routeDirections(operator, route, serviceTypes = []) {
+    const key = `routedirections:${operator}:${route}:${serviceTypes.join(',') || 'all'}`;
+    return this.cache.get(key, STATIC_TTL, async () => {
+      /** @type {{ dir: 'O'|'I', originEn: string, originTc: string, destEn: string, destTc: string }[]} */
+      const out = [];
+      for (const dir of /** @type {const ('O'|'I')[]} */ (['O', 'I'])) {
+        const ids = await this.routeStopIds(operator, route, dir, serviceTypes).catch(() => []);
+        if (!ids.length) continue;
+        const first = await this.stop(operator, ids[0]).catch(() => undefined);
+        const last = ids.length > 1 ? await this.stop(operator, ids[ids.length - 1]).catch(() => undefined) : first;
+        out.push({
+          dir,
+          originEn: asText(first?.nameEn),
+          originTc: asText(first?.nameTc),
+          destEn: asText(last?.nameEn),
+          destTc: asText(last?.nameTc),
+        });
+      }
+      return out;
+    });
+  }
+
+  /**
+   * The directions of a route, if they have already been worked out.
+   *
+   * This never goes to the network, so it is how a list can show the second
+   * direction of a route the interface has already seen.
+   *
+   * @param {'kmb'|'ctb'|'nlb'} operator
+   * @param {string} route
+   * @param {number[]} [serviceTypes]
+   * @returns {{ dir: 'O'|'I', originEn: string, originTc: string, destEn: string, destTc: string }[] | undefined}
+   */
+  cachedRouteDirections(operator, route, serviceTypes = []) {
+    return this.cache.peek(
+      `routedirections:${operator}:${route}:${serviceTypes.join(',') || 'all'}`,
+      STATIC_TTL,
+    );
+  }
+
+  /**
    * The ordered stops of one route direction.
    * @param {'kmb'|'ctb'|'nlb'} operator
    * @param {string} route
@@ -796,64 +978,7 @@ export class Upstream {
 
     const load = async () => {
       /** @type {{ seq: number, stopId: string, serviceType: number }[]} */
-      const raw = [];
-
-      if (operator === 'kmb') {
-        const types = serviceTypes.length ? serviceTypes : [1];
-        const payloads = await mapLimited(
-          2,
-          types.map((type) => async () => {
-            const payload = await getJson(
-              `${KMB_BASE}/route-stop/${encodeURIComponent(route)}/${dir === 'O' ? 'outbound' : 'inbound'}/${type}`,
-            );
-            return Array.isArray(payload?.data) ? payload.data : [];
-          }),
-        );
-        for (const rows of payloads) {
-          for (const row of rows ?? []) {
-            if (!isObject(row)) continue;
-            raw.push({
-              seq: Number.parseInt(asText(row.seq), 10) || 0,
-              stopId: asText(row.stop),
-              serviceType: Number.parseInt(asText(row.service_type), 10) || 1,
-            });
-          }
-        }
-      } else if (operator === 'ctb') {
-        const payload = await getJson(
-          `${GOV_BASE}/v2/transport/citybus/route-stop/CTB/${encodeURIComponent(route)}/${dir === 'O' ? 'outbound' : 'inbound'}`,
-        );
-        for (const row of Array.isArray(payload?.data) ? payload.data : []) {
-          if (!isObject(row)) continue;
-          raw.push({ seq: Number.parseInt(asText(row.seq), 10) || 0, stopId: asText(row.stop), serviceType: 1 });
-        }
-      } else {
-        const ids = await this.nlbRouteIds();
-        const all = ids.get(route) ?? [];
-        const candidates = all.length > 1 ? [all[dir === 'O' ? 0 : 1]] : all;
-        for (const routeId of candidates) {
-          const payload = await getJson(
-            `${GOV_BASE}/v2/transport/nlb/stop.php?action=list&routeId=${encodeURIComponent(routeId)}`,
-          );
-          const rows = Array.isArray(payload?.stops) ? payload.stops : [];
-          for (const stop of rows) {
-            if (!isObject(stop)) continue;
-            raw.push({
-              seq: raw.length + 1,
-              stopId: asText(stop.stopId),
-              serviceType: 1,
-              nameEn: asText(stop.stopName_e),
-              nameTc: asText(stop.stopName_c),
-              lat: asNumber(stop.latitude),
-              long: asNumber(stop.longitude),
-              fare: Number.isFinite(Number.parseFloat(asText(stop.fare))) ? Number.parseFloat(asText(stop.fare)) : null,
-              fareHoliday: Number.isFinite(Number.parseFloat(asText(stop.fareHoliday)))
-                ? Number.parseFloat(asText(stop.fareHoliday))
-                : null,
-            });
-          }
-        }
-      }
+      const raw = await this.rawRouteStops(operator, route, dir, serviceTypes);
 
       // Deduplicate by stop id, keeping the first occurrence in sequence order.
       /** @type {Map<string, any>} */

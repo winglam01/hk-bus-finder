@@ -90,11 +90,21 @@ export async function handleApi(path, options = {}) {
     }
 
     if (method === 'GET' && pathname === '/api/search/routes') {
-      const results = await getDomain().searchRoutes(
+      const domain = await getDomain();
+      const results = await domain.searchRoutes(
         url.searchParams.get('q') ?? '',
         url.searchParams.get('operator') ?? '',
       );
-      return { status: 200, payload: { results, now: new Date().toISOString() } };
+      // The directions of a Citybus route are worked out in the background, so
+      // their progress travels with the results.
+      return {
+        status: 200,
+        payload: {
+          results,
+          now: new Date().toISOString(),
+          directions: { ...domain.directionProbe },
+        },
+      };
     }
 
     if (method === 'GET' && pathname === '/api/search/stops') {

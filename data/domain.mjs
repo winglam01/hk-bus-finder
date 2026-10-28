@@ -261,7 +261,37 @@ export function createDomain(context = {}) {
     }
 
     results.sort((a, b) => b.score - a.score || a.operator.localeCompare(b.operator) || a.route.localeCompare(b.route));
-    return results.slice(0, MAX_RESULTS);
+
+    // Citybus publishes no direction in its route list, so the second
+    // direction of a route is worked out from its route-stop endpoints. The
+    // answer is cached, so it is picked up here as soon as it is known.
+    /** @type {any[]} */
+    const combined = [];
+    for (const item of results.slice(0, MAX_RESULTS)) {
+      combined.push(item);
+      if (item.operator !== 'ctb') continue;
+      const known = upstream.cachedRouteDirections('ctb', item.route);
+      if (!known) continue;
+      const other = known.find((entry) => entry.dir !== item.dir);
+      if (!other) continue;
+      combined.push({
+        ...item,
+        dir: other.dir,
+        originEn: other.originEn,
+        originTc: other.originTc,
+        destEn: other.destEn,
+        destTc: other.destTc,
+      });
+    }
+    combined.sort(
+      (a, b) => b.score - a.score || a.operator.localeCompare(b.operator) || a.route.localeCompare(b.route),
+    );
+    const shown = combined.slice(0, MAX_RESULTS);
+
+    // The directions that are not known yet are worked out in the background.
+    probeDirections(shown);
+
+    return shown;
   }
 
   /**
@@ -302,6 +332,85 @@ export function createDomain(context = {}) {
     return results.slice(0, 50);
   }
 
+  // ---------------------------------------------------------- directions
+
+  /**
+   * The directions a route runs.
+   *
+   * KMB and Lantau publish a bound for every direction they run, so their
+   * route list is enough. Citybus publishes one row per route with no
+   * direction at all, so its second direction is worked out from the
+   * route-stop endpoints, which do carry one.
+   *
+   * @param {'kmb'|'ctb'|'nlb'} operator
+   * @param {string} route
+   * @param {any} entry
+   */
+  async function routeDirections(operator, route, entry) {
+    /** @type {any[]} */
+    const known = [...entry.directions.entries()].map(([key, value]) => ({
+      dir: key,
+      originEn: value.originEn,
+      originTc: value.originTc,
+      destEn: value.destEn,
+      destTc: value.destTc,
+      serviceTypes: value.serviceTypes.length ? value.serviceTypes : [1],
+    }));
+
+    if (operator !== 'ctb') return known;
+
+    const probed = await upstream.routeDirections(operator, route).catch(() => []);
+    for (const extra of probed) {
+      if (known.some((item) => item.dir === extra.dir)) continue;
+      known.push({ ...extra, serviceTypes: [1] });
+    }
+    known.sort((a, b) => (a.dir === 'O' ? -1 : 1));
+    return known;
+  }
+
+  /**
+   * Citybus routes are worked out in the background while the user reads a
+   * result list, so the list can show both directions once it is known. The
+   * answer is cached, so a route is only ever asked about once.
+   */
+  const directionProbe = { status: 'idle', resolved: 0, total: 0 };
+
+  /** @type {Promise<void> | null} */
+  let directionProbeTask = null;
+
+  /** How many routes one background pass may ask about. */
+  const DIRECTION_PROBE_LIMIT = 32;
+
+  /**
+   * @param {any[]} results
+   */
+  function probeDirections(results) {
+    if (directionProbeTask) return;
+    const pending = [
+      ...new Set(results.filter((item) => item.operator === 'ctb').map((item) => item.route)),
+    ]
+      .filter((route) => !upstream.cachedRouteDirections('ctb', route))
+      .slice(0, DIRECTION_PROBE_LIMIT);
+    if (!pending.length) return;
+
+    directionProbe.status = 'running';
+    directionProbe.total = pending.length;
+    directionProbe.resolved = 0;
+    directionProbeTask = (async () => {
+      try {
+        await mapLimited(6, pending.map((route) => async () => {
+          await upstream.routeDirections('ctb', route).catch(() => []);
+          directionProbe.resolved += 1;
+        }));
+        directionProbe.status = 'complete';
+      } catch {
+        directionProbe.status = 'failed';
+      } finally {
+        directionProbeTask = null;
+      }
+    })();
+  }
+
   // ---------------------------------------------------------- route detail
 
   /**
@@ -318,14 +427,7 @@ export function createDomain(context = {}) {
     const entry = index.get(`${operator}:${routeNo}`);
     if (!entry) throw new NotFoundError(`route ${routeNo} is not published by ${OPERATORS[operator].name}`);
 
-    const directions = [...entry.directions.entries()].map(([key, value]) => ({
-      dir: key,
-      originEn: value.originEn,
-      originTc: value.originTc,
-      destEn: value.destEn,
-      destTc: value.destTc,
-      serviceTypes: value.serviceTypes.length ? value.serviceTypes : [1],
-    }));
+    const directions = await routeDirections(operator, routeNo, entry);
 
     const wanted = directions.some((item) => item.dir === dir) ? dir : directions[0].dir;
     const direction = directions.find((item) => item.dir === wanted) ?? directions[0];
@@ -650,6 +752,7 @@ export function createDomain(context = {}) {
     catalogue,
     buildCatalogue,
     fareTable,
+    directionProbe,
   };
 }
 

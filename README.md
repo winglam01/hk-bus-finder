@@ -24,6 +24,8 @@ It launches full screen with no browser chrome, keeps working offline with the l
 
 KMB's daytime and night services are kept as **separate variants** rather than merged, because they genuinely start from different termini — route 968 runs from Yuen Long (West) by day and from Yuen Long Park by night.
 
+A route that runs one way only shows one direction. KMB and Lantau publish a direction for every route they run, so their route list is enough. Citybus publishes one row per route with no direction at all, so its second direction is worked out from the route-stop endpoint — which is why the second direction of a Citybus route appears a moment after the first search for it, and is remembered from then on.
+
 ## Live sites
 
 | | |

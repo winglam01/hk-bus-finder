@@ -303,6 +303,51 @@ check(
   `${fareSearch[0]?.fare}`,
 );
 
+/* ------------------------------------------------------------ directions */
+
+section('directions');
+// Citybus publishes one row per route with no direction, so the app has to
+// work the directions out from the route-stop endpoints.
+const ctbBoth = await domain.routeDetail('ctb', '6', 'O');
+check(
+  'a Citybus route that runs both ways shows both directions',
+  ctbBoth.directions.length === 2,
+  ctbBoth.directions.map((item) => item.dir).join(','),
+);
+check(
+  'the Citybus inbound direction names its termini',
+  ctbBoth.directions.some((item) => item.dir === 'I' && item.originEn && item.destEn),
+  JSON.stringify(ctbBoth.directions.find((item) => item.dir === 'I') ?? {}),
+);
+
+const ctbOneWay = await domain.routeDetail('ctb', 'H1', 'O');
+check(
+  'a Citybus route that only runs one way shows one direction',
+  ctbOneWay.directions.length === 1,
+  ctbOneWay.directions.map((item) => item.dir).join(','),
+);
+
+const ctbInbound = await domain.routeDetail('ctb', '6', 'I');
+check(
+  'the inbound direction can be asked for directly',
+  ctbInbound.dir === 'I' && ctbInbound.stops.length > 0,
+  `${ctbInbound.dir}, ${ctbInbound.stops.length} stops`,
+);
+
+const kmbBoth = await domain.routeDetail('kmb', '968', 'O');
+check(
+  'a KMB route that runs both ways keeps both directions',
+  kmbBoth.directions.length === 2,
+  kmbBoth.directions.map((item) => item.dir).join(','),
+);
+
+const kmbOneWay = await domain.routeDetail('kmb', '10', 'O');
+check(
+  'a KMB route that only runs one way shows one direction',
+  kmbOneWay.directions.length === 1,
+  kmbOneWay.directions.map((item) => item.dir).join(','),
+);
+
 /* ------------------------------------------------------------- departures */
 
 section('departures');

@@ -4,7 +4,7 @@
    data layer in ./data already caches upstream responses with short,
    honest TTLs. */
 
-const CACHE = 'hkbus-shell-v3';
+const CACHE = 'hkbus-shell-v4';
 
 const SHELL = [
   './',

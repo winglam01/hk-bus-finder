@@ -267,6 +267,7 @@ async function runFinderSearch() {
       const payload = await api(`/api/search/routes?q=${encodeURIComponent(q)}${operatorParam}`);
       state.finder.results = payload.results || [];
       state.finder.stopResults = [];
+      noteDirections(payload.directions);
     } else {
       const payload = await api(`/api/search/stops?q=${encodeURIComponent(q)}${operatorParam}`);
       state.finder.stopResults = payload.results || [];
@@ -299,6 +300,23 @@ function noteCatalogue(catalogue) {
     if (state.view.name === 'finder' && state.finder.mode === 'stops') void runFinderSearch();
     if (state.view.name === 'board' && state.board.q.trim()) void runBoardSearch();
   }, 4000);
+}
+
+/**
+ * Citybus publishes no direction in its route list, so the direction of a
+ * Citybus route is worked out from its route-stop endpoint while the result
+ * list is on screen. The results are refreshed so the second direction shows
+ * up as soon as it is known rather than only on the next search.
+ */
+let directionTimer = null;
+
+function noteDirections(directions) {
+  if (!directions) return;
+  clearTimeout(directionTimer);
+  if (directions.status !== 'running') return;
+  directionTimer = setTimeout(() => {
+    if (state.view.name === 'finder' && state.finder.mode === 'routes') void runFinderSearch();
+  }, 2500);
 }
 
 function scheduleBoardSearch() {
