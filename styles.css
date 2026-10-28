@@ -520,6 +520,12 @@ select {
   border: 1px solid var(--mcode-border);
 }
 
+.badge--fare {
+  color: var(--mcode-accent);
+  background: color-mix(in srgb, var(--mcode-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--mcode-accent) 30%, transparent);
+}
+
 .badge--live {
   color: var(--mcode-success);
   background: color-mix(in srgb, var(--mcode-success) 12%, transparent);

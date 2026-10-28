@@ -4,7 +4,7 @@
    data layer in ./data already caches upstream responses with short,
    honest TTLs. */
 
-const CACHE = 'hkbus-shell-v2';
+const CACHE = 'hkbus-shell-v3';
 
 const SHELL = [
   './',
@@ -19,6 +19,8 @@ const SHELL = [
   './data/domain.mjs',
   './data/upstream.mjs',
   './data/storage.mjs',
+  './data/fares.mjs',
+  './data/fares.json',
 ];
 
 self.addEventListener('install', (event) => {

@@ -40,6 +40,18 @@ function operatorBadge(operator) {
   return `<span class="badge badge--${id}">${esc(OPERATOR_NAME[id])}</span>`;
 }
 
+/**
+ * The published fare for a route. KMB and Citybus fares come from the
+ * Transport Department fare table, Lantau from its own feed.
+ */
+function fareBadge(fare, label = '') {
+  if (fare === null || fare === undefined) return '';
+  const value = Number(fare);
+  if (!Number.isFinite(value)) return '';
+  const text = `HK$${value.toFixed(1)}`;
+  return `<span class="badge badge--fare" title="Full adult fare for the whole route">${esc(text)}${label ? ` ${esc(label)}` : ''}</span>`;
+}
+
 function timeOf(iso) {
   const at = Date.parse(iso);
   if (!Number.isFinite(at)) return '';
@@ -447,7 +459,10 @@ function renderFeatured() {
             <span class="row__title">${esc(item.originEn || '—')} → ${esc(item.destEn || '—')}</span>
             <span class="row__sub">${esc(item.originTc || '')}</span>
           </span>
-          <span class="row__meta">${operatorBadge(item.operator)}</span>
+          <span class="row__meta">
+            ${operatorBadge(item.operator)}
+            ${fareBadge(item.fare)}
+          </span>
         </button>`,
         )
         .join('')}
@@ -465,6 +480,7 @@ function renderRouteRow(item) {
       </span>
       <span class="row__meta">
         ${operatorBadge(item.operator)}
+        ${fareBadge(item.fare)}
         <div style="margin-top:4px">${item.dir === 'O' ? 'Outbound' : 'Inbound'}</div>
       </span>
     </button>
@@ -555,7 +571,8 @@ function renderRoute() {
         <div class="route-head__meta">
           ${operatorBadge(data.operator)}
           <span class="badge badge--muted">${esc(serviceLabel(data.serviceTypes))}</span>
-          ${data.fare ? `<span class="badge badge--muted">HK$${esc(data.fare.toFixed(1))}</span>` : ''}
+          ${fareBadge(data.fare)}
+          ${fareBadge(data.fareHoliday, 'holiday')}
         </div>
       </div>
     </div>
@@ -663,6 +680,7 @@ function renderBoard() {
           <span class="row__meta">
             ${item.next !== null ? `<strong style="font-size:14px;color:var(--mcode-text)">${esc(countdownLabel(item.next))}</strong>` : '<span>no service due</span>'}
             <div style="margin-top:4px">${esc(timeOf(item.departures[0]?.time || ''))}</div>
+            <div style="margin-top:4px">${fareBadge(item.fare)}</div>
           </span>
         </button>`,
           )

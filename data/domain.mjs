@@ -13,6 +13,7 @@
 
 import { OPERATORS, Upstream, mapLimited } from './upstream.mjs';
 import { createBrowserStorage } from './storage.mjs';
+import { emptyFareTable, loadFareTable } from './fares.mjs';
 
 const FAVOURITES_KEY = 'favourites';
 const MAX_RESULTS = 80;
@@ -76,6 +77,46 @@ export function createDomain(context = {}) {
   const background = context.background !== false;
 
   const upstream = new Upstream(storage);
+
+  // ------------------------------------------------------------- fares
+
+  /**
+   * The Transport Department fare table, read once and kept in memory. It is
+   * a small static file, so it costs one request the first time a fare is
+   * needed and nothing after that.
+   *
+   * @type {Promise<import('./fares.mjs').FareTable> | null}
+   */
+  let fareTableTask = null;
+
+  function fareTable() {
+    if (!fareTableTask) {
+      fareTableTask = loadFareTable(async () => {
+        const response = await fetch(new URL('./fares.json', import.meta.url));
+        if (!response.ok) throw new Error(`the fare table could not be read (${response.status})`);
+        return response.text();
+      })
+        .catch(() => emptyFareTable())
+        .then((table) => {
+          // A failed read must not poison every later lookup.
+          if (table.count === 0) fareTableTask = null;
+          return table;
+        });
+    }
+    return fareTableTask;
+  }
+
+  /**
+   * The whole-route adult fare for a route, or null when none is published.
+   *
+   * @param {string} operator
+   * @param {string} route
+   */
+  async function fareFor(operator, route) {
+    if (operator === 'nlb') return null;
+    const table = await fareTable();
+    return table.fare(operator, route);
+  }
 
   /** @type {any[]} */
   let favourites = [];
@@ -179,6 +220,7 @@ export function createDomain(context = {}) {
     const q = normaliseQuery(query);
     const index = await upstream.routeIndex();
     const only = OPERATORS[operator] ? operator : '';
+    const table = await fareTable();
 
     /** @type {any[]} */
     const results = [];
@@ -213,6 +255,7 @@ export function createDomain(context = {}) {
           destEn: direction.destEn,
           destTc: direction.destTc,
           serviceTypes: direction.serviceTypes,
+          fare: table.fare(entry.operator, entry.route),
         });
       }
     }
@@ -303,6 +346,12 @@ export function createDomain(context = {}) {
     const first = stops[0];
     const last = stops[stops.length - 1];
 
+    // Lantau publishes its own fare with every stop, so it is used when it
+    // is there. KMB and Citybus publish no fare at all, so theirs comes from
+    // the Transport Department table.
+    const operatorFare = first?.fare ?? null;
+    const tableFare = operatorFare === null ? await fareFor(operator, routeNo) : null;
+
     return {
       operator,
       operatorName: OPERATORS[operator].name,
@@ -318,8 +367,9 @@ export function createDomain(context = {}) {
       originTc: first?.nameTc || direction.originTc,
       destEn: last?.nameEn || direction.destEn,
       destTc: last?.nameTc || direction.destTc,
-      fare: first?.fare ?? null,
+      fare: operatorFare ?? tableFare,
       fareHoliday: first?.fareHoliday ?? null,
+      fareSource: operatorFare !== null ? 'operator' : tableFare !== null ? 'table' : null,
       stopCount: stops.length,
       generatedAt: new Date().toISOString(),
     };
@@ -393,6 +443,7 @@ export function createDomain(context = {}) {
 
     const stopInfo = await upstream.stop(operator, stop);
     const routes = await upstream.stopRoutes(operator, stop);
+    const table = await fareTable();
 
     /** @type {Map<string, { route: string, dir: 'O'|'I', serviceTypes: number[] }>} */
     const groups = new Map();
@@ -459,6 +510,7 @@ export function createDomain(context = {}) {
         serviceTypes: row.serviceTypes,
         departures: row.departures,
         next: row.departures[0]?.minutes ?? null,
+        fare: table.fare(operator, row.route),
       }))
       .sort((a, b) => {
         if (a.next === null) return 1;
@@ -483,6 +535,7 @@ export function createDomain(context = {}) {
 
   async function featured() {
     const index = await upstream.routeIndex();
+    const table = await fareTable();
     /** @type {any[]} */
     const picks = [];
     for (const operator of ['kmb', 'ctb', 'nlb']) {
@@ -499,6 +552,7 @@ export function createDomain(context = {}) {
           originTc: direction.originTc,
           destEn: direction.destEn,
           destTc: direction.destTc,
+          fare: table.fare(operator, entry.route),
         });
         if (picks.filter((pick) => pick.operator === operator).length >= 4) break;
       }
@@ -536,6 +590,10 @@ export function createDomain(context = {}) {
         { label: 'KMB / Long Win', url: 'https://data.etabus.gov.hk/' },
         { label: 'Citybus', url: 'https://data.gov.hk/en-data/dataset/ctb-eta-transport-realtime-eta' },
         { label: 'Lantau Bus', url: 'https://www.nlb.com.hk/datagovhk/BusServiceOpenAPIDocumentation2.0.pdf' },
+        {
+          label: 'Transport Department fares',
+          url: 'https://data.gov.hk/en-data/dataset/hk-td-tis_3-routes-and-fares-of-public-transport',
+        },
       ],
     };
   }
@@ -591,6 +649,7 @@ export function createDomain(context = {}) {
     removeFavourite,
     catalogue,
     buildCatalogue,
+    fareTable,
   };
 }
 
